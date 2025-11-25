@@ -9,6 +9,14 @@ from Crypto.Util.Padding import pad, unpad
 
 # Helper Functions For Encryption/Decryption
 
+def generateAESKey(client_name):
+    # Generate a 256 AES key
+    key = os.urandom(32)  # AES-256
+    with open(f'../{client_name}/sym_key', 'wb') as f:
+        f.write(key)
+    return key
+
+
 def getKey():
     with open('../key', 'rb') as f:
         key = f.read()
@@ -75,15 +83,140 @@ def client_handeler(connectionSocket, addr, key):
 
             if choice == '1':
                 # Create and send an email
-                pass
+
+                # The format of the email message is as follows:
+                # From: [The source client username who sent the message] \n
+                # To: [The list of destination clients’ usernames separated by “;”] \n
+                # Time and Date: [The time and date of receiving the message]\n
+                # Title: [The title of the sent message with maximum length of 100 characters] \n
+                # Content Length: [Number of characters in the content field] \n
+                # Content: \n
+                # [message contents with a maximum length of 1000000 characters]
+
+                Enter_email_prompt = "Enter emails (separated by ;):\n"
+                encrypted_prompt = encryptMessage(key, Enter_email_prompt)
+                connectionSocket.send(encrypted_prompt)
+
+                user_input = connectionSocket.recv(2048)
+                email_list = decryptMessage(key, user_input).strip().split(';')
+
+                Enter_title_prompt = "Enter title:\n"
+                encrypted_prompt = encryptMessage(key, Enter_title_prompt)
+                connectionSocket.send(encrypted_prompt)
+
+                user_input = connectionSocket.recv(2048)
+                email_title = decryptMessage(key, user_input).strip()
+
+                load_content_prompt = "Would you like to load contents from a file? (Y/N): "
+                encrypted_prompt = encryptMessage(key, load_content_prompt)
+                connectionSocket.send(encrypted_prompt)
+
+                user_input = connectionSocket.recv(2048)
+                load_choice = decryptMessage(key, user_input).strip().upper()
+
+                if load_choice == 'Y':
+                    file_prompt = "Enter file path: "
+                    encrypted_prompt = encryptMessage(key, file_prompt)
+                    connectionSocket.send(encrypted_prompt)
+
+                    user_input = connectionSocket.recv(2048)
+                    file_path = decryptMessage(key, user_input).strip()
+
+                    try:
+                        with open(file_path, 'r') as f:
+                            email_content = f.read()
+                    except FileNotFoundError:
+                        email_content = "File not found. Email content is empty."
+
+                else:
+                    Enter_content_prompt = "Enter content:\n"
+                    encrypted_prompt = encryptMessage(key, Enter_content_prompt)
+                    connectionSocket.send(encrypted_prompt)
+
+                    user_input = connectionSocket.recv(2048)
+                    email_content = decryptMessage(key, user_input).strip()
+
+                # Format full email
+
+                from datetime import datetime
+                now = datetime.now()
+                dt_string = now.strftime("%Y-%m-%d %H:%M:%S")
+                full_email = (
+                    f"From: {NameStr}\n"
+                    f"To: {';'.join(email_list)}\n"
+                    f"Time and Date: {dt_string}\n"
+                    f"Title: {email_title}\n"
+                    f"Content Length: {len(email_content)}\n"
+                    f"Content:\n"
+                    f"{email_content}"
+                )
+
+                print(full_email)
+
+                # Save as text file in each recipient's folder
+                for recipient in email_list:
+                    recipient = recipient.strip()
+                    if recipient:
+                        recipient_dir = f"../{recipient}"
+                        if not os.path.exists(recipient_dir):
+                            os.makedirs(recipient_dir)
+
+                        # "[Username of source]_[email title].txt" 
+                        # Assuming client will not send duplicate titled emails
+                        email_filename = f"{NameStr}_{email_title}.txt"
+                        with open(email_filename, 'w') as f:
+                            f.write(full_email)
+                        
+
 
             elif choice == '2':
-                # Display inbox list
-                pass
+                # Display Index, From, Date/Time, Title
+                # Reads client directory for emails
+
+                # Format:
+                # Index From    DateTime                   Title
+                # 1     client2 2022-07-21 19:29:35.768508 Test2
+                # 2     client1 2022-07-21 19:29:42.118132 Test
+
+                client_directory = f"../{NameStr}"
+                
+                email_files = [f for f in os.listdir(client_directory) if os.path.isfile(os.path.join(client_directory, f))]
+                email_summaries = []
+                for index, email_file in enumerate(email_files, start=1):
+                    with open(os.path.join(client_directory, email_file), 'r') as f:
+                        lines = f.readlines()
+                        from_line = lines[0].strip()  # From: ...
+                        date_line = lines[2].strip()  # Time and Date: ...
+                        title_line = lines[3].strip()  # Title: ...
+                        email_summaries.append(f"{index} {from_line[6:]} {date_line[15:]} {title_line[7:]}")
+                summary_header = "Index From    DateTime                   Title\n"
+                summary_content = "\n".join(email_summaries)
+                full_summary = summary_header + summary_content
+                
+                encrypted_summary = encryptMessage(key, full_summary)
+                connectionSocket.send(encrypted_summary)
 
             elif choice == '3':
                 # Display the email contents
-                pass
+                enter_index_prompt = "Enter the index of the email to display:\n"
+                encrypted_prompt = encryptMessage(key, enter_index_prompt)
+                connectionSocket.send(encrypted_prompt)
+
+                user_input = connectionSocket.recv(2048)
+                email_index = int(decryptMessage(key, user_input).strip())
+                client_directory = f"../{NameStr}"
+                email_files = [f for f in os.listdir(client_directory) if os.path.isfile(os.path.join(client_directory, f))]
+                if 1 <= email_index <= len(email_files):
+                    email_file = email_files[email_index - 1]
+                    with open(os.path.join(client_directory, email_file), 'r') as f:
+                        email_content = f.read()
+                    encrypted_email_content = encryptMessage(key, email_content)
+                    connectionSocket.send(encrypted_email_content)
+                else:
+                    error_msg = "Invalid email index."
+                    encrypted_error_msg = encryptMessage(key, error_msg)
+                    connectionSocket.send(encrypted_error_msg)
+
 
             elif choice == '4':
                 # Terminate connection
@@ -124,6 +257,7 @@ def server():
     #The server can only have one connection in its queue waiting for acceptance
     serverSocket.listen(5)
     
+    # Need to do SHA Key Here
     key = getKey()
 
     while 1:
