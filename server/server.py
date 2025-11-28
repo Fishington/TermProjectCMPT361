@@ -12,7 +12,7 @@ from Crypto.Util.Padding import pad, unpad
 def generateAESKey(client_name):
     # Generate a 256 AES key
     key = os.urandom(32)  # AES-256
-    with open(f'../{client_name}/sym_key', 'wb') as f:
+    with open(f'../client/{client_name}/sym_key', 'wb') as f:
         f.write(key)
     return key
 
@@ -93,14 +93,14 @@ def client_handeler(connectionSocket, addr, key):
                 # Content: \n
                 # [message contents with a maximum length of 1000000 characters]
 
-                Enter_email_prompt = "Enter emails (separated by ;):\n"
+                Enter_email_prompt = "Enter emails (separated by ;): "
                 encrypted_prompt = encryptMessage(key, Enter_email_prompt)
                 connectionSocket.send(encrypted_prompt)
 
                 user_input = connectionSocket.recv(2048)
                 email_list = decryptMessage(key, user_input).strip().split(';')
 
-                Enter_title_prompt = "Enter title:\n"
+                Enter_title_prompt = "Enter title: "
                 encrypted_prompt = encryptMessage(key, Enter_title_prompt)
                 connectionSocket.send(encrypted_prompt)
 
@@ -129,7 +129,7 @@ def client_handeler(connectionSocket, addr, key):
                         email_content = "File not found. Email content is empty."
 
                 else:
-                    Enter_content_prompt = "Enter content:\n"
+                    Enter_content_prompt = "Enter content:"
                     encrypted_prompt = encryptMessage(key, Enter_content_prompt)
                     connectionSocket.send(encrypted_prompt)
 
@@ -157,17 +157,25 @@ def client_handeler(connectionSocket, addr, key):
                 for recipient in email_list:
                     recipient = recipient.strip()
                     if recipient:
-                        recipient_dir = f"../{recipient}"
+                        recipient_dir = f"../client/{recipient}"
                         if not os.path.exists(recipient_dir):
                             os.makedirs(recipient_dir)
 
                         # "[Username of source]_[email title].txt" 
                         # Assuming client will not send duplicate titled emails
                         email_filename = f"{NameStr}_{email_title}.txt"
-                        with open(email_filename, 'w') as f:
-                            f.write(full_email)
-                        
 
+                        full_path = os.path.join(recipient_dir, email_filename)
+                        with open(full_path, 'w') as f:
+                            f.write(full_email)
+                
+                # Send Confirmation Message
+                Confirmation_prompt = "The message is sent to the server."
+                encrypted_prompt = encryptMessage(key, Confirmation_prompt)
+                connectionSocket.send(encrypted_prompt)
+
+                # Client ACK so that menu doesnt send right away
+                connectionSocket.recv(2048) 
 
             elif choice == '2':
                 # Display Index, From, Date/Time, Title
@@ -178,10 +186,16 @@ def client_handeler(connectionSocket, addr, key):
                 # 1     client2 2022-07-21 19:29:35.768508 Test2
                 # 2     client1 2022-07-21 19:29:42.118132 Test
 
-                client_directory = f"../{NameStr}"
+                client_directory = f"../client/{NameStr}"
                 
-                email_files = [f for f in os.listdir(client_directory) if os.path.isfile(os.path.join(client_directory, f))]
-                email_summaries = []
+                if not os.path.exists(client_directory):
+                    full_summary = "Inbox is empty (No directory found)."
+                else:
+                    email_files = [f for f in os.listdir(client_directory) if os.path.isfile(os.path.join(client_directory, f))]
+                    if not email_files:
+                        full_summary = "Inbox is empty."
+                    else:
+                        email_summaries = []
                 for index, email_file in enumerate(email_files, start=1):
                     with open(os.path.join(client_directory, email_file), 'r') as f:
                         lines = f.readlines()
@@ -189,12 +203,16 @@ def client_handeler(connectionSocket, addr, key):
                         date_line = lines[2].strip()  # Time and Date: ...
                         title_line = lines[3].strip()  # Title: ...
                         email_summaries.append(f"{index} {from_line[6:]} {date_line[15:]} {title_line[7:]}")
+                summary_line =   "----------------------------------------------"
                 summary_header = "Index From    DateTime                   Title\n"
                 summary_content = "\n".join(email_summaries)
-                full_summary = summary_header + summary_content
+                full_summary = summary_line + summary_header + summary_content
                 
                 encrypted_summary = encryptMessage(key, full_summary)
                 connectionSocket.send(encrypted_summary)
+
+                # Client ACK so that menu doesnt send right away
+                connectionSocket.recv(2048) 
 
             elif choice == '3':
                 # Display the email contents
@@ -204,19 +222,21 @@ def client_handeler(connectionSocket, addr, key):
 
                 user_input = connectionSocket.recv(2048)
                 email_index = int(decryptMessage(key, user_input).strip())
-                client_directory = f"../{NameStr}"
+                client_directory = f"../client/{NameStr}"
                 email_files = [f for f in os.listdir(client_directory) if os.path.isfile(os.path.join(client_directory, f))]
                 if 1 <= email_index <= len(email_files):
                     email_file = email_files[email_index - 1]
                     with open(os.path.join(client_directory, email_file), 'r') as f:
                         email_content = f.read()
-                    encrypted_email_content = encryptMessage(key, email_content)
+                    email_line = "----------------------------------------------"
+                    encrypted_email_content = encryptMessage(key, email_line + email_content)
                     connectionSocket.send(encrypted_email_content)
                 else:
                     error_msg = "Invalid email index."
                     encrypted_error_msg = encryptMessage(key, error_msg)
                     connectionSocket.send(encrypted_error_msg)
 
+                connectionSocket.recv(2048)
 
             elif choice == '4':
                 # Terminate connection
@@ -225,7 +245,7 @@ def client_handeler(connectionSocket, addr, key):
                 connectionSocket.send(encrypted_goodbye)
                 break
 
-    except Execption as e:
+    except Exception as e:
         print('An error occured while communicating with the client:',e)
     finally:
         print(f"Connection with {addr} ({NameStr}) closed.")

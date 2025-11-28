@@ -1,0 +1,7 @@
+From: Client5
+To: Client1;Client2;Client3
+Time and Date: 2025-11-28 10:57:31
+Title: TESTINGHELLO!
+Content Length: 35
+Content:
+Whats going onnn??? Lets a gooooooo
