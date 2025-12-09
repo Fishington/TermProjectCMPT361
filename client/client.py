@@ -14,33 +14,22 @@ from Crypto.Util.Padding import pad, unpad
 #        key = f.read()
 #    return key
 
-def generateRSAKeys(username):
-    # Checks if keys exist on client machine
-    if os.path.exists(f'../{username}_public.pem') and os.path.exists(f'../{username}_private.pem'):
-        with open(f'../{username}_public.pem', 'rb') as f:
+# Returns pubkey for server or (pubkey, privkey) for client, depending on if username is provided
+def getRSAKeys(username=None):
+    if username == None:
+        with open('server_public.pem', 'rb') as f:
             public_key = f.read()
-
-        with open(f'../{username}_private.pem', 'rb') as f:
+        return public_key
+    elif username != None:
+        if not os.path.exists(username):
+            print("Username does not exist locally. Generate keys first.")
+            sys.exit(1)
+            
+        with open(f'{username}/{username}_private.pem', 'rb') as f:
             private_key = f.read()
+        with open(f'{username}/{username}_public.pem', 'rb') as f:
+            public_key = f.read()
         return public_key, private_key
-    
-    else:
-    # Generates RSA key pair and saves to client machine
-        key = RSA.generate(2048)
-        private_key = key.export_key()
-        with open(f'../{username}_private.pem', 'wb') as f:
-            f.write(private_key)
-
-        public_key = key.publickey().export_key()
-        with open(f'../{username}_public.pem', 'wb') as f:
-            f.write(public_key)
-        return public_key, private_key
-
-# Saves the server's public key for later use, if doesnt already exist
-def saveServerPubKey(key):
-    if not os.path.exists(f'../server_public.pem'):
-        with open(f'../server_public.pem', 'wb') as f:
-            f.write(key)
 
 # For sending encrypted username to server
 def encryptMessageRSA(public_key, message):
@@ -70,11 +59,10 @@ def decryptMessage(key, encrypted_message):
     decrypted_message = unpad(decrypted_padded_message, AES.block_size)
     return decrypted_message.decode('ascii')
 
-
 def client():
     # Server Information
     # serverName = '127.0.0.1' #'localhost'
-    serverPort = 12001
+    serverPort = 13000
     username = ""
     #Create client socket that useing IPv4 and TCP protocols 
     try:
@@ -90,23 +78,14 @@ def client():
         #Client connect with the server
         serverName = input("Enter server IP address or name: ")
         clientSocket.connect((serverName,serverPort))
-
-        # Generate RSA Keys for client
-        pubkey, privkey = generateRSAKeys(username)
-
-        # Client receives server's public key
-        server_pubkey= clientSocket.recv(2048)
-        saveServerPubKey(server_pubkey)
-
-        # Client sends client pubkey to server
-        clientSocket.send(pubkey)
     
         # Client receives a message and decrypts it
-        encrypted_welcome = clientSocket.recv(2048)
-        decrypted_welcome = decryptMessageRSA(privkey, encrypted_welcome).decode('ascii')
-        print(decrypted_welcome)
+        welcome_msg = clientSocket.recv(2048).decode('ascii')
+        print(welcome_msg)
 
         username = input()
+        server_pubkey = getRSAKeys()  # Get server public key
+        pubkey, privkey = getRSAKeys(username)  # Get client keys for this username
 
         encrypted_name = encryptMessageRSA(server_pubkey, username)
         clientSocket.send(encrypted_name)

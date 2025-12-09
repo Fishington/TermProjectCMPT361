@@ -20,40 +20,19 @@ def generateAESKey(client_name):
     os.makedirs(f'client/{client_name}', exist_ok=True)
     return key
 
-#def getKey():
-#    with open('../key', 'rb') as f:
-#        key = f.read()
-#    return key
-
-
-# Saves the pubkey of the client for later use, if doesnt already exist
-def saveClientPubKey(client_name, key):
-    if not os.path.exists(f'client/{client_name}/{client_name}_public.pem'):
-        with open(f'client/{client_name}/{client_name}_public.pem', 'wb') as f:
-            f.write(key)
-
-def generateRSAKeys():
-    # Checks if keys exist on server machine
-    if os.path.exists('server_public.pem') and os.path.exists('server_private.pem'):
-        with open('server_public.pem', 'rb') as f:
-            public_key = f.read()
-
+# Returns (pubkey, privkey) for server or (pubkey) for client, depending on if username is provided
+def getRSAKeys(username=None):
+    if username == None:
         with open('server_private.pem', 'rb') as f:
             private_key = f.read()
+        with open('server_public.pem', 'rb') as f:
+            public_key = f.read()
         return public_key, private_key
-    
     else:
-    # Generates RSA key pair and saves to server machine
-        key = RSA.generate(2048)
-        private_key = key.export_key()
-        with open('server_private.pem', 'wb') as f:
-            f.write(private_key)
-
-        public_key = key.publickey().export_key()
-        with open('server_public.pem', 'wb') as f:
-            f.write(public_key)
-        return public_key, private_key
-
+        with open(f'{username}/{username}_public.pem', 'rb') as f:
+            public_key = f.read()
+        return public_key
+    
 # For sending encrypted messages using client pubkey
 def encryptMessageRSA(public_key, message):
     pubkey = RSA.import_key(public_key)
@@ -101,21 +80,16 @@ def client_handeler(connectionSocket, addr):
 
     client_name = ""
     try:
-
-        #Server sends pubkey to client
-        pubkey, privkey = generateRSAKeys()
-        connectionSocket.send(pubkey)
-
-        #Server recieves encrypted client pubkey
-        client_pubkey = connectionSocket.recv(2048)
+        pubkey, privkey = getRSAKeys() # Get server keys
 
         welcome_msg = "Enter your name: "
-        encrypted_message = encryptMessageRSA(client_pubkey, welcome_msg)
-        connectionSocket.send(encrypted_message)
+        connectionSocket.send(welcome_msg.encode('ascii'))
                 
         # Server receives client user name
         encrypted_name = connectionSocket.recv(2048)
         NameStr = decryptMessageRSA(privkey, encrypted_name).decode('ascii').strip()
+
+        client_pubkey = getRSAKeys(NameStr) # Get client public key
 
         # Server asks for password
         password_msg = f"Enter your password: "
@@ -133,8 +107,7 @@ def client_handeler(connectionSocket, addr):
             auth_msg = f"Connection Accepted and Symmetric Key Generated for client: {NameStr}"
             print(auth_msg)
             sym_key = generateAESKey(NameStr)
-            saveClientPubKey(NameStr, client_pubkey)
-            
+
             # send symmetric key to client
             encrypted_sym_key = encryptMessageRSA(client_pubkey, sym_key)
             connectionSocket.send(encrypted_sym_key)
@@ -336,7 +309,7 @@ def client_handeler(connectionSocket, addr):
 
 def server():
     #Server port
-    serverPort = 12001
+    serverPort = 13000
     
     #Create server socket that uses IPv4 and TCP protocols 
     try:

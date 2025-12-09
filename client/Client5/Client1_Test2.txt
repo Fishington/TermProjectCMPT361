@@ -1,7 +1,0 @@
-From: Client1
-To: Client2;Client5;Client1
-Time and Date: 2025-11-28 12:04:52
-Title: Test2
-Content Length: 39
-Content:
-File not found. Email content is empty.

@@ -8,19 +8,52 @@ import datetime
 import glob
 
 from Crypto.Cipher import AES
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_OAEP
 from Crypto.Util.Padding import pad, unpad
 from Crypto.Hash import HMAC, SHA256
 
 
 # Helper Functions For Encryption/Decryption
 
-def getKey():
-    
-    # Read the symmetric AES key from ../key.
-    with open('../key', 'rb') as f:
-        key = f.read()
+def generateAESKey(client_name):
+    # Generate a 256 AES key
+    key = os.urandom(32)  # AES-256
+
+    # Create client directory if it doesn't exist
+    os.makedirs(f'client/{client_name}', exist_ok=True)
     return key
 
+# Returns (pubkey, privkey) for server or (pubkey) for client, depending on if username is provided
+def getRSAKeys(username=None):
+    if username == None:
+        with open('server_private.pem', 'rb') as f:
+            private_key = f.read()
+        with open('server_public.pem', 'rb') as f:
+            public_key = f.read()
+        return public_key, private_key
+    else:
+        with open(f'{username}/{username}_public.pem', 'rb') as f:
+            public_key = f.read()
+        return public_key
+    
+# For sending encrypted messages using client pubkey
+def encryptMessageRSA(public_key, message):
+    pubkey = RSA.import_key(public_key)
+    cipher_rsa_en = PKCS1_OAEP.new(pubkey)
+
+    if isinstance(message, str):  
+        enc_data = cipher_rsa_en.encrypt(message.encode('ascii'))
+    else:
+        enc_data = cipher_rsa_en.encrypt(message)
+    return enc_data
+
+# For receiving encrypted messages using server privkey
+def decryptMessageRSA(private_key, encrypted_message):
+    privkey = RSA.import_key(private_key)
+    cipher_rsa_dec = PKCS1_OAEP.new(privkey)
+    dec_data = cipher_rsa_dec.decrypt(encrypted_message)
+    return dec_data
 
 def encryptMessage(key, message):
     
@@ -41,7 +74,7 @@ def decryptMessage(key, encrypted_message):
 
 
 
-# Enhanced protocol helpers: MAC + sequence numbers
+# Enhanced protocol helpers: MAC + sequence numbers, for AES messages
 
 def compute_mac(key, seq, payload_str):
     """
@@ -74,6 +107,20 @@ def pack_secure_message(key, seq, payload_str):
     encrypted = encryptMessage(key, clear_text)
     return encrypted
 
+def pack_secure_messageRSA(key, seq, payload_str):
+    """
+    Build a secure message object:
+        { "seq": seq, "payload": payload_str }
+    Serialize as JSON string and encrypt with RSA (encryptMessageRSA).
+    """
+    msg_obj = {
+        "seq": seq,
+        "payload": payload_str
+    }
+    clear_text = json.dumps(msg_obj)
+    encrypted = encryptMessageRSA(key, clear_text)
+    return encrypted
+
 
 def unpack_secure_message(key, encrypted_bytes, expected_seq):
     
@@ -99,6 +146,24 @@ def unpack_secure_message(key, encrypted_bytes, expected_seq):
 
     return payload_str
 
+def unpack_secure_messageRSA(key, encrypted_bytes, expected_seq):
+    
+    # Decrypt a secure message and verifies expected sequence number.
+    # Returns the payload string if valid, otherwise raises ValueError.
+    clear_text = decryptMessageRSA(key, encrypted_bytes)
+    msg_obj = json.loads(clear_text)
+
+    seq = msg_obj.get("seq")
+    payload_str = msg_obj.get("payload")
+
+    if seq is None or payload_str is None:
+        raise ValueError("Malformed secure message")
+
+    if seq != expected_seq:
+        raise ValueError(f"Unexpected sequence number: got {seq}, expected {expected_seq}")
+
+    return payload_str
+
 
 
 # User / Mailbox helpers
@@ -107,7 +172,7 @@ def load_user_pass():
     
     # Load username/password pairs from ../user_pass.json.
     # Expected structure: { "client1": "password1", ... }
-    with open('../user_pass.json', 'r') as f:
+    with open('user_pass.json', 'r') as f:
         data = json.load(f)
     return data
 
@@ -165,7 +230,6 @@ def get_inbox_files(username):
 
 
 def handle_client(connectionSocket, clientAddress):
-    key = getKey()
     user_pass = load_user_pass()
 
     send_seq = 1  # messages we send to this client
@@ -177,36 +241,44 @@ def handle_client(connectionSocket, clientAddress):
         
         # Login / initial exchange
 
+        pubkey, privkey = getRSAKeys()  # Server keys
         welcome_msg = "Enter your username: "
-        encrypted_welcome = pack_secure_message(key, send_seq, welcome_msg)
-        connectionSocket.send(encrypted_welcome)
-        send_seq += 1
+        connectionSocket.send(welcome_msg.encode('ascii'))
         print(f"[INFO] Sent welcome prompt to {clientAddress}")
 
         encrypted_name = connectionSocket.recv(4096)
-        username = unpack_secure_message(key, encrypted_name, recv_seq).strip()
+        username = unpack_secure_messageRSA(privkey, encrypted_name, recv_seq).strip()
+        client_pubkey = getRSAKeys(username)  # Get client public key
         recv_seq += 1
         print(f"[INFO] Received username '{username}' from {clientAddress}")
 
         pass_prompt = "Enter your password: "
-        encrypted_pass_prompt = pack_secure_message(key, send_seq, pass_prompt)
+        encrypted_pass_prompt = pack_secure_messageRSA(client_pubkey, send_seq, pass_prompt)
         connectionSocket.send(encrypted_pass_prompt)
         send_seq += 1
 
         encrypted_pass = connectionSocket.recv(4096)
-        password = unpack_secure_message(key, encrypted_pass, recv_seq).strip()
+        password = unpack_secure_messageRSA(privkey, encrypted_pass, recv_seq).strip()
         recv_seq += 1
 
         valid = (username in user_pass and user_pass[username] == password)
-
         if not valid:
             error_msg = "Invalid username or password. Terminating connection."
-            encrypted_error = pack_secure_message(key, send_seq, error_msg)
+            encrypted_error = pack_secure_messageRSA(client_pubkey, send_seq, error_msg)
             connectionSocket.send(encrypted_error)
             send_seq += 1
             print(f"[WARN] Invalid login attempt for username '{username}' from {clientAddress}")
             connectionSocket.close()
             return
+        else:
+            # Generating and sending symmetric AES key, encrypted with RSA using client pubkey
+            key = generateAESKey(username)
+
+            # Send symmetric key encoded as hex string, as pack_secure_messageRSA deals with strings not bytes
+            key_hex = key.hex()
+            encrypted_sym_key = pack_secure_messageRSA(client_pubkey, send_seq, key_hex)
+            connectionSocket.send(encrypted_sym_key)
+            send_seq += 1
 
         print(f"[INFO] Connection accepted for user '{username}' from {clientAddress}")
 
@@ -444,7 +516,7 @@ def handle_client(connectionSocket, clientAddress):
 
 
 def main():
-    serverPort = 12001
+    serverPort = 13000
 
     try:
         serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
